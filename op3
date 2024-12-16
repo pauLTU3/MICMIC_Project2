@@ -12,6 +12,9 @@
 #include <avr/interrupt.h>
 #include <stdio.h>
 
+
+//extern uint8_t adc_read_average(void);
+
 #define F_CPU 16000000UL 
 
 typedef struct USARTX
@@ -47,7 +50,7 @@ int temperature_ones;
 
 //adc
     char buffer[16];
-    uint16_t adcValue;
+    uint8_t adcValue;
     float temperature;
 
 
@@ -64,23 +67,35 @@ void init(void)
 }
 
 void ADC_Init() {
-	ADMUX = (1 << REFS0) | (1 << ADLAR); // AVcc as reference, left-adjust result, ADC0 selected (F0)
-	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1); // Enable ADC, Prescaler = 64
+	ADMUX = 0b00100000; // Aref, left adjust, adc0 F0
+	ADCSRA = 0b10000111; // a/d enable, division factor 128 = 125 khz
 }
 
-// Function to read ADC value from a specified channel (8-bit)
-uint8_t ADC_Read(uint8_t channel) {
-	ADMUX = (ADMUX & 0xF8) | (channel & 0x07); // Select ADC channel
-	ADCSRA |= (1 << ADSC); // Start conversion
-	while (ADCSRA & (1 << ADSC)); // Wait for conversion to complete
-	return ADCH; // Return 8-bit result from ADCH
+unsigned char adc_read_average() 
+{
+    unsigned char highregister1, highregister2;
+
+    // First reading
+    ADCSRA |= (1 << ADSC);  // Start conversion
+    while ((ADCSRA & (1 << ADSC)) != 0);  // Wait for conversion to finish
+    highregister1 = ADCH;  // Read the high byte of the ADC
+
+    // Second reading
+    ADCSRA |= (1 << ADSC);  // Start conversion
+    while ((ADCSRA & (1 << ADSC)) != 0);  // Wait for conversion to finish
+    highregister2 = ADCH;  // Read the high byte of the ADC
+
+    // Compute the average of the two readings
+    return (highregister1 + highregister2) / 2;
 }
+
+
 
 // Function to calculate temperature
 float LM335_Temperature(uint8_t adcValue) {
 	float voltage = (adcValue * 5.0) / 255.0; // Convert 8-bit ADC value to voltage
 	float temperatureK = voltage / 0.01; // Convert voltage to Kelvin (10mV/ºK)
-	uint8_t tmp = temperatureK - 273.15;
+	int tmp = temperatureK - 273.15;
 	return tmp; // Convert Kelvin to Celsius
 	
 	
@@ -89,7 +104,7 @@ float LM335_Temperature(uint8_t adcValue) {
 void conversiontemperature(float temperature,int *temperature_hundreds, int *temperature_tens, int *temperature_ones)
 {
 	 int temp = (int)temperature;
-
+	 temp = abs(temp);
 	 // Extract digits
 	 *temperature_hundreds = temp / 100; // Get the hundreds digit
 	 temp %= 100;                        // Remove the hundreds place
@@ -291,7 +306,14 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 	
 	if (operating_mode == 'T')
 	{
+		if (timer0_counter3>= 200)
+		{
+		adcValue = adc_read_average();
+		temperature = LM335_Temperature(adcValue);
 		conversiontemperature(temperature,&temperature_hundreds,&temperature_tens,&temperature_ones);
+		timer0_counter3	=0;		
+		}
+
 		PORTA= 0b00000000; // select display on the left
 		PORTC=disp[14];
 		delay(del);// time * 5 ms
@@ -513,32 +535,6 @@ ISR(TIMER0_COMP_vect)
 {
 	timer0_counter1 += 1;
 	timer0_counter2 += 1;
-	timer0_counter3 += 1;
-	
-	
-	static uint8_t reading_count = 0;
-	static float temperature_sum = 0.0;
-
-	if (timer0_counter3 > 100) {
-		timer0_counter3 = 0; // Reset the timer counter
-
-		// Take an ADC reading
-		adcValue = ADC_Read(0);
-		float current_temperature = LM335_Temperature(adcValue);
-
-		// Accumulate temperature values and increment reading count
-		temperature_sum += current_temperature;
-		reading_count++;
-
-		// If two readings have been taken, calculate the average
-		if (reading_count >= 2) {
-			temperature = temperature_sum / 2.0; // Compute average temperature
-
-			// Reset counters for the next second
-			reading_count = 0;
-			temperature_sum = 0.0;
-		}
-    }
-			
+	timer0_counter3 += 1;	
 	
 }
