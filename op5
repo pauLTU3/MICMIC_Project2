@@ -12,6 +12,8 @@
 #include <avr/interrupt.h>
 #include <stdio.h>
 
+
+
 #define F_CPU 16000000UL 
 
 typedef struct USARTX
@@ -32,12 +34,12 @@ char transmit_buffer[50];
 uint8_t switches; // Renamed variable to avoid conflict
 const uint8_t disp[]={0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90, 0xBF, 0xFF,0xA1, 0x92, 0x87}; // 1 2 3 4 5 6 7 8 9 0 - off d S t
 
-int num1, num2, direction=0;
+int num1, num2, direction=0, direction_stepper = 0;
 int timer0_counter1 = 0;
 int timer0_counter2 = 0;
 int timer0_counter3 = 0;
 int timer0_counter4 = 0;
-int del=2;
+int del=5;
 int duty = 0;
 char operating_mode = 'D';
 
@@ -45,17 +47,20 @@ int temperature_hundreds;
 int temperature_tens;
 int temperature_ones;
 
-
 int degrees_hundreds;
 int degrees_tens;
 int degrees_ones;
 
+
 //adc
     char buffer[16];
-    uint16_t adcValue;
+    uint8_t adcValue;
     float temperature;
-	
-	float potentiometer;
+	int degrees;
+
+
+ int prev_angle = 0;  // Variable to store the previous potentiometer reading
+ int curr_angle = 0;  // Variable to store the current potentiometer reading
 
 
 void init(void)
@@ -67,30 +72,69 @@ void init(void)
 	PORTB= 0b00000000;
 	DDRF = 0b11100000;
 	PORTF= 0b00000000;
+	DDRE = 0b00001111;
+	PORTE = 0b00001111;
 
 }
 
 void ADC_Init() {
-	// Set reference voltage to AVcc, left adjust result, default to ADC0 (F0)
-	ADMUX = (1 << REFS0) | (1 << ADLAR);
-	// Enable ADC and set prescaler to 64
-	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1);
+	ADCSRA = 0b10000111; // a/d enable, division factor 128 = 125 khz
 }
 
-// Function to read ADC value from a specified channel (8-bit)
-uint8_t ADC_Read(uint8_t channel) {
-	// Clear the last 3 bits of ADMUX and set the new channel
-	ADMUX = (ADMUX & 0xF8) | (channel & 0x07);
-	ADCSRA |= (1 << ADSC); // Start conversion
-	while (ADCSRA & (1 << ADSC)); // Wait for conversion to complete
-	return ADCH; // Return 8-bit result from ADCH
+unsigned char adc_read_average_temperature() 
+{
+	ADMUX = 0b00100000; // Aref, left adjust, adc0 F0
+    unsigned char highregister1, highregister2;
+
+    // First reading
+    ADCSRA |= (1 << ADSC);  // Start conversion
+    while ((ADCSRA & (1 << ADSC)) != 0);  // Wait for conversion to finish
+    highregister1 = ADCH;  // Read the high byte of the ADC
+
+    // Second reading
+    ADCSRA |= (1 << ADSC);  // Start conversion
+    while ((ADCSRA & (1 << ADSC)) != 0);  // Wait for conversion to finish
+    highregister2 = ADCH;  // Read the high byte of the ADC
+
+    // Compute the average of the two readings
+    return (highregister1 + highregister2) / 2;
 }
+
+int adc_read_potentiometer_to_degrees()
+{
+	unsigned long adc_sum = 0; // Use a long to avoid overflow during summation
+	unsigned int adc_result;
+	
+
+	// Configure the ADC to use channel 1 (ADC1, F1) without left adjust
+	ADMUX = 0b00000001; // Aref, right adjust, ADC1 F1
+
+	for (int i = 0; i < 8; i++)
+	{
+		// Start conversion
+		ADCSRA |= (1 << ADSC);
+		while ((ADCSRA & (1 << ADSC)) != 0); // Wait for conversion to finish
+
+		// Read the 10-bit result
+		adc_result = ADCL | (ADCH << 8);
+		adc_sum += adc_result;
+	}
+
+	// Compute the average of the 8 readings
+	adc_result = (unsigned int)(adc_sum / 8);
+
+	// Convert ADC value to degrees
+	degrees = ((int)adc_result - 512.0) * 180.0 / 512.0;
+	return degrees;
+}
+
+
 
 // Function to calculate temperature
 float LM335_Temperature(uint8_t adcValue) {
 	float voltage = (adcValue * 5.0) / 255.0; // Convert 8-bit ADC value to voltage
 	float temperatureK = voltage / 0.01; // Convert voltage to Kelvin (10mV/ºK)
-	uint8_t tmp = temperatureK - 273.15;
+	int tmp = temperatureK - 273.15;
 	return tmp; // Convert Kelvin to Celsius
 	
 	
@@ -99,7 +143,7 @@ float LM335_Temperature(uint8_t adcValue) {
 void conversiontemperature(float temperature,int *temperature_hundreds, int *temperature_tens, int *temperature_ones)
 {
 	 int temp = (int)temperature;
-
+	 temp = abs(temp);
 	 // Extract digits
 	 *temperature_hundreds = temp / 100; // Get the hundreds digit
 	 temp %= 100;                        // Remove the hundreds place
@@ -107,20 +151,22 @@ void conversiontemperature(float temperature,int *temperature_hundreds, int *tem
 	 *temperature_ones = temp % 10;      // Get the ones digit
 }
 
-void conversionpotentiometer(float potentiometer,int *degrees_hundreds, int *degrees_tens, int *degrees_ones)
-{
-	 
-	 
-	 
-	 int deg = (int)potentiometer;
-
-	 // Extract digits
-	 *degrees_hundreds = deg / 100; // Get the hundreds digit
-	 deg %= 100;                        // Remove the hundreds place
-	 *degrees_tens = deg / 10;      // Get the tens digit
-	 *degrees_ones = deg % 10;      // Get the ones digit
+void conversiondegrees(int degrees,int *direction_stepper,int *degrees_hundreds, int *degrees_tens, int *degrees_ones)
+{	
+	if (degrees < 0)
+	{
+		*direction_stepper = 1;
+	}
+	if (degrees >= 0)
+	{
+		*direction_stepper = 0;
+	}
+	degrees = abs(degrees);
+	*degrees_hundreds = degrees / 100; // Get the hundreds digit
+	degrees %= 100;                        // Remove the hundreds place
+	*degrees_tens = degrees / 10;      // Get the tens digit
+	*degrees_ones = degrees % 10;      // Get the ones digit
 }
-
 
 	//USART init
 	void usart_init(void) {
@@ -316,7 +362,14 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 	
 	if (operating_mode == 'T')
 	{
+		if (timer0_counter3>= 200)
+		{
+		adcValue = adc_read_average_temperature();
+		temperature = LM335_Temperature(adcValue);
 		conversiontemperature(temperature,&temperature_hundreds,&temperature_tens,&temperature_ones);
+		timer0_counter3	=0;		
+		}
+
 		PORTA= 0b00000000; // select display on the left
 		PORTC=disp[14];
 		delay(del);// time * 5 ms
@@ -332,12 +385,27 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 			
 	}
 	
-	if (operating_mode == 'MPP')
+		if (operating_mode == 'M')
 	{
-		conversiontemperature(potentiometer,&degrees_hundreds,&degrees_tens,&degrees_ones);
+		degrees = adc_read_potentiometer_to_degrees();
+					//			sprintf(transmit_buffer, "%d\r\n", degrees);
+					//			send_message(transmit_buffer);
+		conversiondegrees(degrees,&direction_stepper,&degrees_hundreds, &degrees_tens, &degrees_ones);
+				//	sprintf(transmit_buffer, "%d\r\n", direction_stepper);
+				//	send_message(transmit_buffer);
 		PORTA= 0b00000000; // select display on the left
-		PORTC=disp[8];
-		delay(del);// time * 5 ms
+		
+		if (direction_stepper == 0)
+		{
+			PORTC=disp[11] ;
+			delay(del);// time * 5 ms
+		}
+		else
+		{
+			PORTC=disp[10] ;
+			delay(del);// time * 5 ms
+		}
+		
 		PORTA= 0b11000000; // select display 1 on the right
 		PORTC=disp[degrees_ones];
 		delay(del);// time * 5 ms
@@ -346,11 +414,82 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 		delay(del);// time * 5 ms
 		PORTA= 0b01000000; // select display 3 on the right
 		PORTC=disp[degrees_hundreds];
-		delay(del);// time * 5 ms
+		delay(del);// time * 5 ms*/
 			
 	}
 	
 	
+	
+}
+
+
+void stepper_motor_step_cw()
+{
+
+}
+
+void stepper_motor_step_ccw()
+{
+
+}
+
+void rotate_stepper(int degrees)
+{
+    int steps = degrees / 9; // Convert degrees to steps
+    if (steps > 0) // Clockwise rotation
+    {
+        for (int i = 0; i < steps;)
+        {
+               PORTE = 0b00001001;
+               delay(5);
+			   i++;
+			   if (i >= steps)
+			   break;
+               PORTE = 0b00000011;
+               delay(5);
+			    i++;
+			    if (i >= steps)
+			    break;
+               PORTE = 0b00000110;
+               delay(5);
+			    i++;
+			    if (i >= steps)
+			    break;
+               PORTE = 0b00001100;
+               delay(5);
+			    i++;
+			    if (i >= steps)
+			    break;
+			
+        }
+    }
+    else if (steps < 0) // Counter-clockwise rotation
+    {
+        steps = -steps; // Convert steps to positive
+        for (int i = 0; i < steps;)
+        {
+               PORTE = 0b00001100;
+               delay(5);
+			     i++;
+			     if (i >= steps)
+			     break;
+               PORTE = 0b00000110;
+               delay(5);
+			     i++;
+			     if (i >= steps)
+			     break;
+               PORTE = 0b00000011;
+               delay(5);
+			     i++;
+			     if (i >= steps)
+			     break;
+               PORTE = 0b00001001;
+               delay(5);
+			     i++;
+			     if (i >= steps)
+			     break;
+        }
+    }
 }
 
 int main(void)
@@ -396,13 +535,12 @@ int main(void)
 		{
 			operating_mode = 'T';
 		}	
-		
+			
 		if (rxUSART.receiver_buffer == 'm'||rxUSART.receiver_buffer == 'M')
 		{
-			operating_mode = 'MPP';
-		}	
-			
-			
+			operating_mode = 'M';
+		}
+		
 		if (operating_mode == 'S')
 		{
 			switches = PINA & 0b00111111; // Read only the lower 6 bits of PINA
@@ -546,6 +684,17 @@ int main(void)
 			}
 		}
 		
+		if (operating_mode == 'M')
+		{	
+			curr_angle = adc_read_potentiometer_to_degrees();  // Get current potentiometer reading
+
+			// Check if the change in angle exceeds the threshold
+			if (abs(curr_angle - prev_angle) >= 9)
+			{
+				rotate_stepper(curr_angle);  // Rotate stepper motor based on potentiometer angle
+				prev_angle = curr_angle;  // Update previous angle
+			}
+		}
 		
 		OCR2= (duty * 255)/100;
 		display (num1,num2,direction,operating_mode,temperature);
@@ -560,61 +709,7 @@ ISR(TIMER0_COMP_vect)
 {
 	timer0_counter1 += 1;
 	timer0_counter2 += 1;
-	timer0_counter3 += 1;
-	timer0_counter4 += 1;
-	
-	
-	static uint8_t reading_count = 0;
-	static float temperature_sum = 0.0;
+	timer0_counter3 += 1;	
 
-	if (timer0_counter3 > 100) {
-		timer0_counter3 = 0; // Reset the timer counter
-
-		// Take an ADC reading for temperature
-		adcValue = ADC_Read(0);
-		float current_temperature = LM335_Temperature(adcValue);
-
-		// Accumulate temperature values and increment reading count
-		temperature_sum += current_temperature;
-		reading_count++;
-
-		// If two readings have been taken, calculate the average
-		if (reading_count >= 2) {
-			temperature = temperature_sum / 2.0; // Compute average temperature
-
-			// Reset counters for the next second
-			reading_count = 0;
-			temperature_sum = 0.0;
-		}
-	}
-
-	// Static variables for potentiometer reading
-	static uint8_t reading_count_potentiometer = 0;
-	static float potentiometer_sum = 0.0;
-
-	if (timer0_counter4 > 100) 
-	{
-		timer0_counter4 = 0; // Reset the timer counter
-
-		// Take an ADC reading for potentiometer
-		
-		float current_potentiometer_reading = ADC_Read(1);
-
-		// Accumulate potentiometer values and increment reading count
-		potentiometer_sum += current_potentiometer_reading;
-		reading_count_potentiometer++;
-
-		// If 8 readings have been taken, calculate the average
-		if (reading_count_potentiometer >= 8) {
-		    potentiometer = potentiometer_sum / 8.0; // Compute average
-
-			// Reset counters for the next cycle
-			reading_count_potentiometer = 0;
-			potentiometer_sum = 0.0;
-
-		}
-	}
-
-			
 	
 }
