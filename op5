@@ -1,0 +1,620 @@
+
+
+/*
+ * Project2 application1.c
+ *
+ * Created: 2024-11-22 08:24:06
+ * Author: Vilius
+ // Project 1 operation2
+ */
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <stdio.h>
+
+#define F_CPU 16000000UL 
+
+typedef struct USARTX
+{
+	char receiver_buffer;
+	unsigned char status;
+	unsigned char receive: 1;
+	unsigned char error: 1;
+	
+} USARTRX_st;
+
+volatile USARTRX_st rxUSART = {0, 0, 0, 0};
+char transmit_buffer[50];
+
+
+// Project 1 operation1
+
+uint8_t switches; // Renamed variable to avoid conflict
+const uint8_t disp[]={0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90, 0xBF, 0xFF,0xA1, 0x92, 0x87}; // 1 2 3 4 5 6 7 8 9 0 - off d S t
+
+int num1, num2, direction=0;
+int timer0_counter1 = 0;
+int timer0_counter2 = 0;
+int timer0_counter3 = 0;
+int timer0_counter4 = 0;
+int del=2;
+int duty = 0;
+char operating_mode = 'D';
+
+int temperature_hundreds;
+int temperature_tens;
+int temperature_ones;
+
+
+int degrees_hundreds;
+int degrees_tens;
+int degrees_ones;
+
+//adc
+    char buffer[16];
+    uint16_t adcValue;
+    float temperature;
+	
+	float potentiometer;
+
+
+void init(void)
+{
+	DDRA = 0b11000000; // Set PORTD as input for switches
+	PORTA= 0b11000000; // select display on the right
+	DDRC = 0b11111111; // define the 7 segment display as output
+	DDRB = 0b11100000;
+	PORTB= 0b00000000;
+	DDRF = 0b11100000;
+	PORTF= 0b00000000;
+
+}
+
+void ADC_Init() {
+	// Set reference voltage to AVcc, left adjust result, default to ADC0 (F0)
+	ADMUX = (1 << REFS0) | (1 << ADLAR);
+	// Enable ADC and set prescaler to 64
+	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1);
+}
+
+// Function to read ADC value from a specified channel (8-bit)
+uint8_t ADC_Read(uint8_t channel) {
+	// Clear the last 3 bits of ADMUX and set the new channel
+	ADMUX = (ADMUX & 0xF8) | (channel & 0x07);
+	ADCSRA |= (1 << ADSC); // Start conversion
+	while (ADCSRA & (1 << ADSC)); // Wait for conversion to complete
+	return ADCH; // Return 8-bit result from ADCH
+}
+
+// Function to calculate temperature
+float LM335_Temperature(uint8_t adcValue) {
+	float voltage = (adcValue * 5.0) / 255.0; // Convert 8-bit ADC value to voltage
+	float temperatureK = voltage / 0.01; // Convert voltage to Kelvin (10mV/ºK)
+	uint8_t tmp = temperatureK - 273.15;
+	return tmp; // Convert Kelvin to Celsius
+	
+	
+}
+
+void conversiontemperature(float temperature,int *temperature_hundreds, int *temperature_tens, int *temperature_ones)
+{
+	 int temp = (int)temperature;
+
+	 // Extract digits
+	 *temperature_hundreds = temp / 100; // Get the hundreds digit
+	 temp %= 100;                        // Remove the hundreds place
+	 *temperature_tens = temp / 10;      // Get the tens digit
+	 *temperature_ones = temp % 10;      // Get the ones digit
+}
+
+void conversionpotentiometer(float potentiometer,int *degrees_hundreds, int *degrees_tens, int *degrees_ones)
+{
+	 
+	 
+	 
+	 int deg = (int)potentiometer;
+
+	 // Extract digits
+	 *degrees_hundreds = deg / 100; // Get the hundreds digit
+	 deg %= 100;                        // Remove the hundreds place
+	 *degrees_tens = deg / 10;      // Get the tens digit
+	 *degrees_ones = deg % 10;      // Get the ones digit
+}
+
+
+	//USART init
+	void usart_init(void) {
+		UBRR1H = 0;               // USART1: High byte of baud rate
+		UBRR1L = 207;             // Baud Rate = 9600 (Low byte)
+		UCSR1A = (1 << U2X1);     // Double speed mode
+		UCSR1B = (1 << RXCIE1) |  // Enable RX Complete Interrupt
+		(1 << RXEN1)  |  // Enable Receiver
+		(1 << TXEN1);    // Enable Transmitter
+		UCSR1C = (1 << UCSZ11) | (1 << UCSZ10);   // Character size: 8-bit
+		sei();                    // Enable global interrupts
+	}
+	
+	void send_message(char *buffer) {
+		unsigned char i = 0; // Initialize index variable
+		while (buffer[i] != '\0') 
+		{ // Loop until the end of the string
+			while ((UCSR1A & 1 << UDRE1) == 0); // Wait until the data register is empty
+			UDR1 = buffer[i]; // Load the character into the data register
+			i++; // Move to the next character
+		}
+	}
+
+	ISR(USART1_RX_vect) {
+		rxUSART.status = UCSR1A; // Store status register for error checking
+
+		// Check for errors (Framing Error, Data Overrun, Parity Error)
+		if (rxUSART.status & ((1<<FE1) | (1<<DOR1) | (1>> UPE1))) {
+			rxUSART.error = 1;  // Set error flag
+			} else {
+			rxUSART.receiver_buffer = UDR1; // Store received data
+			rxUSART.receive = 1; // Set receive flag
+		}
+	}
+	
+void timer_init(void) {
+	// Set Timer/Counter0 to CTC mode
+	TCCR0 = (1 << WGM01); // CTC mode (WGM01 = 1, WGM00 = 0)
+
+	// Set OCR0 value
+	OCR0 = 77; // Compare Match value
+
+	// Set prescaler to 1024
+	TCCR0 |= (1 << CS02) | (1 << CS01)| (1 << CS00); // Prescaler = 1024 
+
+	// Enable Output Compare Match Interrupt 
+	TIMSK = (1 << OCIE0); 
+
+	// Enable global interrupts (optional, if using interrupts)
+	sei(); 
+}
+
+void timer2_init(void) {
+	// Set OC2 (PD7) as output
+	
+	// Set Timer 2 to Phase Correct PWM mode with non-inverting output
+	TCCR2 |= (1 << WGM20);                // Phase Correct PWM mode
+	TCCR2 |= (1 << COM21);               // non inverted  
+	
+	// Set prescaler to 64
+	TCCR2 |= (1 << CS21) | (1 << CS20) ;  // Prescaler = 64
+}
+
+void delay (int del) // time * 5 ms
+{
+	while (timer0_counter2 < del)
+	{
+	}
+		timer0_counter2=0;
+}
+
+void dir (int direction)
+{
+				if (direction == 0)
+				{	
+					while (timer0_counter1 < 50)
+					{
+						display (num1,num2,direction,operating_mode,temperature);
+					}
+					if(timer0_counter1>=50)
+					{
+						PORTB |= (1 << PB5)|(1 << PB6);
+						PORTB &= ~(1 << PB6);     // Ensure PB6 is low
+						
+					}
+				}
+				
+				else if (direction ==1)
+				{
+					while (timer0_counter1 < 50)
+					{
+						display (num1,num2,direction,operating_mode,temperature);
+					}
+					if(timer0_counter1>=50)
+					{
+						PORTB |= (1 << PB5)|(1 << PB6);
+						PORTB &= ~(1 << PB5);     // Ensure PB5 is low
+						
+					}
+				}
+				
+}
+
+void stop (void)
+{
+	
+	PORTB &= ~((1 << PB5) | (1 << PB6));
+	timer0_counter1=0;
+}
+
+void display(int num1, int num2, int direction, char operating_mode, float temperature)
+{
+	if (operating_mode == 'S')
+	{
+		PORTA= 0b00000000; // select display on the left
+		PORTC=disp[13];
+		delay(del);// time * 5 ms
+		if (num1 == 0 && num2 == 0)
+		{
+			PORTA= 0b11000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+			PORTA= 0b10000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+			PORTA= 0b01000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+		}
+		
+		else
+		{
+			PORTA= 0b11000000; // select display on the left
+			PORTC=disp[num1];
+			delay(del);// time * 5 ms
+			PORTA= 0b10000000; // select display on the left
+			PORTC=disp[num2];
+			delay(del);// time * 5 ms
+			PORTA= 0b01000000; // select display on the left
+			if (direction == 0)
+			{
+				PORTC=disp[11] ;
+				delay(del);// time * 5 ms
+			}
+			
+			if (direction ==1)
+			{
+				PORTC=disp[10] ;
+				delay(del);// time * 5 ms
+			}
+		}
+	}
+	if (operating_mode == 'D')
+	{
+		PORTA= 0b00000000; // select display on the left
+		PORTC=disp[12];
+		delay(del);// time * 5 ms
+		if (num1 == 0 && num2 == 0)
+		{
+			PORTA= 0b11000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+			PORTA= 0b10000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+			PORTA= 0b01000000; // select display on the left
+			PORTC=disp[11];
+			delay(del);// time * 5 ms
+		}
+		
+		else
+		{
+			PORTA= 0b11000000; // select display on the left
+			PORTC=disp[num1];
+			delay(del);// time * 5 ms
+			PORTA= 0b10000000; // select display on the left
+			PORTC=disp[num2];
+			delay(del);// time * 5 ms
+			PORTA= 0b01000000; // select display on the left
+			if (direction == 0)
+			{
+				PORTC=disp[11] ;
+				delay(del);// time * 5 ms
+			}
+			
+			if (direction ==1)
+			{
+				PORTC=disp[10] ;
+				delay(del);// time * 5 ms
+			}
+		}
+	}
+	
+	if (operating_mode == 'T')
+	{
+		conversiontemperature(temperature,&temperature_hundreds,&temperature_tens,&temperature_ones);
+		PORTA= 0b00000000; // select display on the left
+		PORTC=disp[14];
+		delay(del);// time * 5 ms
+		PORTA= 0b11000000; // select display 1 on the right
+		PORTC=disp[temperature_ones];
+		delay(del);// time * 5 ms
+		PORTA= 0b10000000; // select display 2on the right
+		PORTC=disp[temperature_tens];
+		delay(del);// time * 5 ms
+		PORTA= 0b01000000; // select display 3 on the right
+		PORTC=disp[temperature_hundreds];
+		delay(del);// time * 5 ms
+			
+	}
+	
+	if (operating_mode == 'MPP')
+	{
+		conversiontemperature(potentiometer,&degrees_hundreds,&degrees_tens,&degrees_ones);
+		PORTA= 0b00000000; // select display on the left
+		PORTC=disp[8];
+		delay(del);// time * 5 ms
+		PORTA= 0b11000000; // select display 1 on the right
+		PORTC=disp[degrees_ones];
+		delay(del);// time * 5 ms
+		PORTA= 0b10000000; // select display 2on the right
+		PORTC=disp[degrees_tens];
+		delay(del);// time * 5 ms
+		PORTA= 0b01000000; // select display 3 on the right
+		PORTC=disp[degrees_hundreds];
+		delay(del);// time * 5 ms
+			
+	}
+	
+	
+}
+
+int main(void)
+{
+
+    init();
+	usart_init();
+    timer_init();
+	timer2_init();
+	ADC_Init();
+	
+	PORTB= 0b00000000;
+    while (1)
+    {
+		 if (rxUSART.receive == 1) 
+		 { // Check for new received data
+            if (rxUSART.error == 1) 
+			{ // Check for errors
+                // Handle errors appropriately (e.g., log, retry, etc.)
+                rxUSART.error = 0; // Clear error flag
+            } 
+			else 
+			{
+                sprintf(transmit_buffer, "Leter: %c\r\n", rxUSART.receiver_buffer);
+                send_message(transmit_buffer);
+            }	
+			rxUSART.receive = 0; // Clear receive flag
+		}
+		
+		//operating_mode = rxUSART.receiver_buffer;
+		if (rxUSART.receiver_buffer == 'd'||rxUSART.receiver_buffer == 'D')
+		{
+			operating_mode = 'D';
+			
+		}
+		
+		if (rxUSART.receiver_buffer == 's'||rxUSART.receiver_buffer == 'S')
+		{
+			operating_mode = 'S';	
+		}
+			
+		if (rxUSART.receiver_buffer == 't'||rxUSART.receiver_buffer == 'T')
+		{
+			operating_mode = 'T';
+		}	
+		
+		if (rxUSART.receiver_buffer == 'm'||rxUSART.receiver_buffer == 'M')
+		{
+			operating_mode = 'MPP';
+		}	
+			
+			
+		if (operating_mode == 'S')
+		{
+			switches = PINA & 0b00111111; // Read only the lower 6 bits of PINA
+			switch (switches)
+			{
+				case 0b00111110: // sw1
+				while ((PINA & (1 << PA0)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =5; num2 =2;
+				duty = 25;
+				break;
+				
+				case 0b00111101: // sw2
+				while ((PINA & (1 << PA1)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 = 5;
+				duty = 50;
+				
+				break;
+				case 0b00111011: // sw3
+				while ((PINA & (1 << PA2)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 =7;
+				duty = 70;
+				
+				break;
+				
+				case 0b00110111: // sw4
+				while ((PINA & (1 << PA3)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 =9;
+				duty = 90;
+				
+				break;
+				
+				case 0b00101111: // sw5
+				// Wait for button to be released
+				while ((PINA & (1 << PA4)) == 0)
+				{
+				}
+				direction ^= 1; // Toggle direction
+				stop ();
+				dir (direction);
+				break;
+				
+				case 0b00011111: // sw6
+				while ((PINA & (1 << PA5)) == 0)
+				{
+				}
+				duty = 0;
+				num1 =0; num2 =0;
+				stop ();
+				break;
+				
+				default:
+				break;
+			}
+			
+		}			
+			
+		if (operating_mode == 'D')
+		{
+			
+			
+			if ( rxUSART.receiver_buffer == '1')
+			{
+				dir (direction);
+				duty = 25;
+				num1 =5; num2 =2;
+				
+			
+			}
+			
+			if ( rxUSART.receiver_buffer == '2')
+			{
+				dir (direction);
+				duty = 50;
+				num1 =0; num2 =5;
+				
+			
+			}
+			
+			if ( rxUSART.receiver_buffer == '3')
+			{
+				dir (direction);
+				duty = 70;
+				num1 =0; num2 =7;
+				
+			
+			}
+			
+			if ( rxUSART.receiver_buffer == '4')
+			{
+				dir (direction);
+				duty = 90;
+				num1 =0; num2 =9;
+				
+			
+			}
+			
+			if ( rxUSART.receiver_buffer == 'i'||rxUSART.receiver_buffer == 'I')
+			{
+				
+				direction ^= 1; // Toggle direction
+				stop ();
+				dir (direction);
+				rxUSART.receiver_buffer = 'q';
+			}
+			
+			if ( rxUSART.receiver_buffer == 'p'||rxUSART.receiver_buffer == 'P')
+			{
+				duty = 0;
+				num1 =0; num2 =0;
+				stop ();
+				
+				
+			}
+			if ( rxUSART.receiver_buffer == 'b'||rxUSART.receiver_buffer == 'B')
+			{
+				if (direction == 1)
+				{
+					sprintf(transmit_buffer, "Duty: -");
+					send_message(transmit_buffer);
+				}
+				else
+				{
+					sprintf(transmit_buffer, "Duty: ");
+					send_message(transmit_buffer);
+				}
+				sprintf(transmit_buffer, "%d\r\n", duty);
+				send_message(transmit_buffer);
+				rxUSART.receiver_buffer = 'q';
+			}
+		}
+		
+		
+		OCR2= (duty * 255)/100;
+		display (num1,num2,direction,operating_mode,temperature);
+	}
+		
+     
+	
+	return 0; // Good practice to return a value in main
+}
+
+ISR(TIMER0_COMP_vect) 
+{
+	timer0_counter1 += 1;
+	timer0_counter2 += 1;
+	timer0_counter3 += 1;
+	timer0_counter4 += 1;
+	
+	
+	static uint8_t reading_count = 0;
+	static float temperature_sum = 0.0;
+
+	if (timer0_counter3 > 100) {
+		timer0_counter3 = 0; // Reset the timer counter
+
+		// Take an ADC reading for temperature
+		adcValue = ADC_Read(0);
+		float current_temperature = LM335_Temperature(adcValue);
+
+		// Accumulate temperature values and increment reading count
+		temperature_sum += current_temperature;
+		reading_count++;
+
+		// If two readings have been taken, calculate the average
+		if (reading_count >= 2) {
+			temperature = temperature_sum / 2.0; // Compute average temperature
+
+			// Reset counters for the next second
+			reading_count = 0;
+			temperature_sum = 0.0;
+		}
+	}
+
+	// Static variables for potentiometer reading
+	static uint8_t reading_count_potentiometer = 0;
+	static float potentiometer_sum = 0.0;
+
+	if (timer0_counter4 > 100) 
+	{
+		timer0_counter4 = 0; // Reset the timer counter
+
+		// Take an ADC reading for potentiometer
+		
+		float current_potentiometer_reading = ADC_Read(1);
+
+		// Accumulate potentiometer values and increment reading count
+		potentiometer_sum += current_potentiometer_reading;
+		reading_count_potentiometer++;
+
+		// If 8 readings have been taken, calculate the average
+		if (reading_count_potentiometer >= 8) {
+		    potentiometer = potentiometer_sum / 8.0; // Compute average
+
+			// Reset counters for the next cycle
+			reading_count_potentiometer = 0;
+			potentiometer_sum = 0.0;
+
+		}
+	}
+
+			
+	
+}
