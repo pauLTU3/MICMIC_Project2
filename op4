@@ -17,12 +17,12 @@ int num1, num2, direction=0;
 int timer0_counter1 = 0;
 int timer0_counter2 = 0;
 int timer0_counter3 = 0;
-int Flag_1s = 0;
-int del=1;
+
+int del=2;
 int duty = 0;
 char operating_mode = 'S';
 
-float speed = 0,speedsum = 0;
+int speed = 0,speedsum = 0;
 int speed_thousands;
 int speed_hundreds;
 int speed_tens;
@@ -124,11 +124,11 @@ void stop (void)
 	timer0_counter1=0;
 }
 
-void display(int num1, int num2, int direction, char operating_mode)
+void display(int num1, int num2, int direction, char operating_mode,int speed)
 {
 		if (operating_mode == 'S')
 		{
-			displayconversion(speed,speed_thousands,speed_hundreds,speed_tens,speed_one);
+			displayconversion(speed,&speed_thousands,&speed_hundreds,&speed_tens,&speed_one);
 			PORTA= 0b11000000; // select display 1 on the right
 			PORTC=disp[speed_one];
 			delay(del);// time * 5 ms
@@ -143,8 +143,8 @@ void display(int num1, int num2, int direction, char operating_mode)
 			delay(del);// time * 5 ms
 			
 		}
-	/*
-	if (operating_mode == 'S')
+	
+	if (operating_mode == 'aaa')
 	{
 	
 			if (num1 == 0 && num2 == 0)
@@ -191,19 +191,15 @@ void display(int num1, int num2, int direction, char operating_mode)
 						PORTC=disp[13];
 						delay(del);// time * 5 ms
 					}
-					if (operating_mode == 'D')
-					{
-						PORTC=disp[12];
-						delay(del);// time * 5 ms
-					}
+					
 			
 				}
-	}*/
+	}
 }
 
-void displayconversion(float speed, int *speed_thousands, int *speed_hundreds, int *speed_tens, int *speed_ones)
+void displayconversion(int speed, int *speed_thousands, int *speed_hundreds, int *speed_tens, int *speed_ones)
 {
-	int spd = (int)speed;
+	int spd = speed;
 	// Extract digits
 	*speed_thousands = spd / 1000; // Extract thousands
 	spd %= 1000;                   // Remove the thousands place
@@ -224,7 +220,8 @@ int main(void)
 
 	dir (direction);
    
-	
+	while(1)
+	{
 			
 		if (operating_mode == 'S')
 		{
@@ -293,15 +290,22 @@ int main(void)
 			}
 			
 		}			
+			//speed = timer0_counter3;
+		if (timer0_counter3 >= 200)
+		{
 			
-		
+			speed = speedsum *60;
+			
+			timer0_counter3 = 0;
+			speedsum = 0;
+		}
 		OCR2= (duty * 255)/100;
-		//display (num1,num2,direction,operating_mode);
+		display (num1,num2,direction,operating_mode,speed);
 		
 	
 		
      
-	
+	}
 	return 0; // Good practice to return a value in main
 }
 
@@ -315,13 +319,4 @@ ISR(TIMER0_COMP_vect)
 ISR(INT3_vect)
 {
 	speedsum++;
-	
-	if (timer0_counter3 >= 200)
-	{
-		
-		speed = speedsum * 60;
-		timer0_counter3 = 0;
-		speedsum = 0;
-	}
-
 }
