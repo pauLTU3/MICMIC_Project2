@@ -1,0 +1,327 @@
+
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <stdio.h>
+
+#define F_CPU 16000000UL 
+
+
+
+// Project 1 operation1
+
+uint8_t switches; // Renamed variable to avoid conflict
+const uint8_t disp[]={0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90, 0xBF, 0xFF,0xA1, 0x92}; // 1 2 3 4 5 6 7 8 9 0 - off d S
+
+int num1, num2, direction=0;
+int timer0_counter1 = 0;
+int timer0_counter2 = 0;
+int timer0_counter3 = 0;
+int Flag_1s = 0;
+int del=1;
+int duty = 0;
+char operating_mode = 'S';
+
+float speed = 0,speedsum = 0;
+int speed_thousands;
+int speed_hundreds;
+int speed_tens;
+int speed_one;
+
+
+void init(void)
+{
+	DDRA = 0b11000000; // Set PORTD as input for switches
+	PORTA= 0b11000000; // select display on the right
+	DDRC = 0b11111111; // define the 7 segment display as output
+	DDRB = 0b11100000;
+	PORTB= 0b00000000;
+	
+	//interupt settings
+	EICRA = 0b11111111; // eising edge
+	EIMSK = 0b00001000; // int3
+	
+
+}
+
+
+
+void timer_init(void) {
+	// Set Timer/Counter0 to CTC mode
+	TCCR0 = (1 << WGM01); // CTC mode (WGM01 = 1, WGM00 = 0)
+
+	// Set OCR0 value
+	OCR0 = 77; // Compare Match value
+
+	// Set prescaler to 1024
+	TCCR0 |= (1 << CS02) | (1 << CS01)| (1 << CS00); // Prescaler = 1024 
+
+	// Enable Output Compare Match Interrupt 
+	TIMSK = (1 << OCIE0); 
+
+	// Enable global interrupts (optional, if using interrupts)
+	sei(); 
+}
+
+void timer2_init(void) {
+	// Set OC2 (PD7) as output
+	
+	// Set Timer 2 to Phase Correct PWM mode with non-inverting output
+	TCCR2 |= (1 << WGM20);                // Phase Correct PWM mode
+	TCCR2 |= (1 << COM21);               // non inverted  
+	
+	// Set prescaler to 64
+	TCCR2 |= (1 << CS21) | (1 << CS20) ;  // Prescaler = 64
+}
+
+void delay (int del) // time * 5 ms
+{
+	while (timer0_counter2 < del)
+	{
+	}
+		timer0_counter2=0;
+	
+}
+
+
+
+void dir (int direction)
+{
+				if (direction == 0)
+				{	
+					while (timer0_counter1 < 50)
+					{
+						display (num1,num2,direction,operating_mode);
+					}
+					if(timer0_counter1>=50)
+					{
+						PORTB |= (1 << PB5)|(1 << PB6);
+						PORTB &= ~(1 << PB6);     // Ensure PB6 is low
+						
+					}
+				}
+				
+				else if (direction ==1)
+				{
+					while (timer0_counter1 < 50)
+					{
+						display (num1,num2,direction,operating_mode);
+					}
+					if(timer0_counter1>=50)
+					{
+						PORTB |= (1 << PB5)|(1 << PB6);
+						PORTB &= ~(1 << PB5);     // Ensure PB5 is low
+						
+					}
+				}
+				
+}
+
+void stop (void)
+{
+	
+	PORTB &= ~((1 << PB5) | (1 << PB6));
+	timer0_counter1=0;
+}
+
+void display(int num1, int num2, int direction, char operating_mode)
+{
+		if (operating_mode == 'S')
+		{
+			displayconversion(speed,speed_thousands,speed_hundreds,speed_tens,speed_one);
+			PORTA= 0b11000000; // select display 1 on the right
+			PORTC=disp[speed_one];
+			delay(del);// time * 5 ms
+			PORTA= 0b10000000; // select display 2on the right
+			PORTC=disp[speed_tens];
+			delay(del);// time * 5 ms
+			PORTA= 0b01000000; // select display 3 on the right
+			PORTC=disp[speed_hundreds];
+			delay(del);// time * 5 ms
+			PORTA= 0b00000000; // select display on the left
+			PORTC=disp[speed_thousands];
+			delay(del);// time * 5 ms
+			
+		}
+	/*
+	if (operating_mode == 'S')
+	{
+	
+			if (num1 == 0 && num2 == 0)
+			{
+				PORTA= 0b11000000; // select display on the left
+				PORTC=disp[11];
+				delay(del);// time * 5 ms
+				PORTA= 0b10000000; // select display on the left
+				PORTC=disp[11];
+				delay(del);// time * 5 ms
+				PORTA= 0b01000000; // select display on the left
+				PORTC=disp[11];
+				delay(del);// time * 5 ms
+				if (operating_mode == 'S')
+				{
+					PORTA= 0b00000000; // select display on the left
+					PORTC=disp[13];
+				}
+			}
+				else
+				{
+				PORTA= 0b11000000; // select display on the left
+				PORTC=disp[num1];
+				delay(del);// time * 5 ms
+				PORTA= 0b10000000; // select display on the left
+				PORTC=disp[num2];
+				delay(del);// time * 5 ms
+				PORTA= 0b01000000; // select display on the left
+					if (direction == 0)
+					{	
+						PORTC=disp[11] ;
+						delay(del);// time * 5 ms
+					}
+		
+			
+					if (direction ==1)
+					{
+						PORTC=disp[10] ;
+						delay(del);// time * 5 ms
+					}
+				PORTA= 0b00000000; // select display on the left	
+					if (operating_mode == 'S')
+					{
+						PORTC=disp[13];
+						delay(del);// time * 5 ms
+					}
+					if (operating_mode == 'D')
+					{
+						PORTC=disp[12];
+						delay(del);// time * 5 ms
+					}
+			
+				}
+	}*/
+}
+
+void displayconversion(float speed, int *speed_thousands, int *speed_hundreds, int *speed_tens, int *speed_ones)
+{
+	int spd = (int)speed;
+	// Extract digits
+	*speed_thousands = spd / 1000; // Extract thousands
+	spd %= 1000;                   // Remove the thousands place
+	*speed_hundreds = spd / 100;   // Extract hundreds
+	spd %= 100;                    // Remove the hundreds place
+	*speed_tens = spd / 10;        // Extract tens
+	*speed_ones = spd % 10;        // Extract ones
+}
+
+
+
+int main(void)
+{
+
+    init();
+    timer_init();
+	timer2_init();
+
+	dir (direction);
+   
+	
+			
+		if (operating_mode == 'S')
+		{
+			switches = PINA & 0b00111111; // Read only the lower 6 bits of PINA
+			switch (switches)
+			{
+				case 0b00111110: // sw1
+				while ((PINA & (1 << PA0)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =5; num2 =2;
+				duty = 25;
+				break;
+				
+				case 0b00111101: // sw2
+				while ((PINA & (1 << PA1)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 = 5;
+				duty = 50;
+				
+				break;
+				case 0b00111011: // sw3
+				while ((PINA & (1 << PA2)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 =7;
+				duty = 70;
+				
+				break;
+				
+				case 0b00110111: // sw4
+				while ((PINA & (1 << PA3)) == 0)
+				{
+				}
+				dir (direction);
+				num1 =0; num2 =9;
+				duty = 90;
+				
+				break;
+				
+				case 0b00101111: // sw5
+				// Wait for button to be released
+				while ((PINA & (1 << PA4)) == 0)
+				{
+				}
+				direction ^= 1; // Toggle direction
+				stop ();
+				dir (direction);
+				break;
+				
+				case 0b00011111: // sw6
+				while ((PINA & (1 << PA5)) == 0)
+				{
+				}
+				duty = 0;
+				num1 =0; num2 =0;
+				stop ();
+				break;
+				
+				default:
+				break;
+			}
+			
+		}			
+			
+		
+		OCR2= (duty * 255)/100;
+		//display (num1,num2,direction,operating_mode);
+		
+	
+		
+     
+	
+	return 0; // Good practice to return a value in main
+}
+
+ISR(TIMER0_COMP_vect) 
+{
+	timer0_counter1 += 1;
+	timer0_counter2 += 1;
+	timer0_counter3 += 1;
+}
+
+ISR(INT3_vect)
+{
+	speedsum++;
+	
+	if (timer0_counter3 >= 200)
+	{
+		
+		speed = speedsum * 60;
+		timer0_counter3 = 0;
+		speedsum = 0;
+	}
+
+}
