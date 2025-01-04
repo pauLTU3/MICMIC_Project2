@@ -39,7 +39,7 @@ int timer0_counter1 = 0;
 int timer0_counter2 = 0;
 int timer0_counter3 = 0;
 int timer0_counter4 = 0;
-int del=5;
+int del=1;
 int duty = 0;
 char operating_mode = 'D';
 
@@ -50,6 +50,7 @@ int temperature_ones;
 int degrees_hundreds;
 int degrees_tens;
 int degrees_ones;
+int cnt = 0;
 
 
 //adc
@@ -57,11 +58,25 @@ int degrees_ones;
     uint8_t adcValue;
     float temperature;
 	int degrees;
+	int step[] = {
+		0b00000001,  
+		0b00001001,  
+		0b00001000,  
+		0b00001100,  
+		0b00000100,  
+		0b00000110,  
+		0b00000010,  
+		0b00000011   
+	};
 
 
  int prev_angle = 0;  // Variable to store the previous potentiometer reading
  int curr_angle = 0;  // Variable to store the current potentiometer reading
 
+
+	 int currentPosition = 0;  // Initialize current position
+	 int targetPosition = 1;    // Track the target position
+	int steps, stepIndex = 0;
 
 void init(void)
 {
@@ -161,11 +176,12 @@ void conversiondegrees(int degrees,int *direction_stepper,int *degrees_hundreds,
 	{
 		*direction_stepper = 0;
 	}
-	degrees = abs(degrees);
-	*degrees_hundreds = degrees / 100; // Get the hundreds digit
-	degrees %= 100;                        // Remove the hundreds place
-	*degrees_tens = degrees / 10;      // Get the tens digit
-	*degrees_ones = degrees % 10;      // Get the ones digit
+	int deg;
+	deg = abs(degrees);
+	*degrees_hundreds = deg / 100; // Get the hundreds digit
+	deg %= 100;                        // Remove the hundreds place
+	*degrees_tens = deg / 10;      // Get the tens digit
+	*degrees_ones = deg % 10;      // Get the ones digit
 }
 
 	//USART init
@@ -277,7 +293,7 @@ void stop (void)
 	timer0_counter1=0;
 }
 
-void display(int num1, int num2, int direction, char operating_mode, float temperature)
+void display(int num1, int num2, int direction, char operating_mode, float temperature,int degrees	)
 {
 	if (operating_mode == 'S')
 	{
@@ -387,9 +403,7 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 	
 		if (operating_mode == 'M')
 	{
-		degrees = adc_read_potentiometer_to_degrees();
-					//			sprintf(transmit_buffer, "%d\r\n", degrees);
-					//			send_message(transmit_buffer);
+		
 		conversiondegrees(degrees,&direction_stepper,&degrees_hundreds, &degrees_tens, &degrees_ones);
 				//	sprintf(transmit_buffer, "%d\r\n", direction_stepper);
 				//	send_message(transmit_buffer);
@@ -423,74 +437,63 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 }
 
 
-void stepper_motor_step_cw()
-{
 
-}
 
-void stepper_motor_step_ccw()
-{
 
-}
+
 
 void rotate_stepper(int degrees)
 {
-    int steps = degrees / 9; // Convert degrees to steps
-    if (steps > 0) // Clockwise rotation
-    {
-        for (int i = 0; i < steps;)
-        {
-               PORTE = 0b00001001;
-               delay(5);
-			   i++;
-			   if (i >= steps)
-			   break;
-               PORTE = 0b00000011;
-               delay(5);
-			    i++;
-			    if (i >= steps)
-			    break;
-               PORTE = 0b00000110;
-               delay(5);
-			    i++;
-			    if (i >= steps)
-			    break;
-               PORTE = 0b00001100;
-               delay(5);
-			    i++;
-			    if (i >= steps)
-			    break;
-			
-        }
-    }
-    else if (steps < 0) // Counter-clockwise rotation
-    {
-        steps = -steps; // Convert steps to positive
-        for (int i = 0; i < steps;)
-        {
-               PORTE = 0b00001100;
-               delay(5);
-			     i++;
-			     if (i >= steps)
-			     break;
-               PORTE = 0b00000110;
-               delay(5);
-			     i++;
-			     if (i >= steps)
-			     break;
-               PORTE = 0b00000011;
-               delay(5);
-			     i++;
-			     if (i >= steps)
-			     break;
-               PORTE = 0b00001001;
-               delay(5);
-			     i++;
-			     if (i >= steps)
-			     break;
-        }
-    }
+
+
+	// Calculate the steps only when a new movement is requested
+	if (currentPosition != targetPosition)
+	{
+		// Only calculate steps if a movement is needed
+		steps = degrees / 9;
+		targetPosition = currentPosition + steps;  // Set the target position
+	}
+
+	// If the target position is different from the current position
+	if (targetPosition != currentPosition)
+	{
+		// Move towards the target position
+		while (currentPosition != targetPosition)
+		{
+			if (targetPosition < currentPosition)
+			{
+				currentPosition--;  // Move backward
+				stepIndex = (8 - (currentPosition % 8)) % 8;  // Reverse order: 0 -> 7 -> 6 -> ...
+				PORTE = step[stepIndex];
+				delay(5);
+			}
+
+			if (targetPosition > currentPosition)
+			{
+				currentPosition++;  // Move forward
+				stepIndex = currentPosition % 8;  // Normal order: 0 -> 1 -> 2 -> ... -> 7
+				PORTE = step[stepIndex];
+				delay(5);
+			}
+
+			// Send position information
+			sprintf(transmit_buffer, "\n");
+			send_message(transmit_buffer);
+			sprintf(transmit_buffer, "Current Position: %d\r\n", currentPosition);
+			send_message(transmit_buffer);
+			sprintf(transmit_buffer, "Target Position: %d\r\n", targetPosition);
+			send_message(transmit_buffer);
+			sprintf(transmit_buffer, "stepIndex: %d\r\n", stepIndex);
+			send_message(transmit_buffer);
+		}
+
+		// After completing the movement, update currentPosition to targetPosition
+		currentPosition = targetPosition;
+	}
+
 }
+
+
 
 int main(void)
 {
@@ -686,18 +689,17 @@ int main(void)
 		
 		if (operating_mode == 'M')
 		{	
-			curr_angle = adc_read_potentiometer_to_degrees();  // Get current potentiometer reading
-
-			// Check if the change in angle exceeds the threshold
-			if (abs(curr_angle - prev_angle) >= 9)
+			if (timer0_counter4 >= 200)
 			{
-				rotate_stepper(curr_angle);  // Rotate stepper motor based on potentiometer angle
-				prev_angle = curr_angle;  // Update previous angle
+			degrees = adc_read_potentiometer_to_degrees();
+			rotate_stepper(degrees);
+			timer0_counter4 =0;	
 			}
+		
 		}
 		
 		OCR2= (duty * 255)/100;
-		display (num1,num2,direction,operating_mode,temperature);
+		display (num1,num2,direction,operating_mode,temperature,degrees);
 	}
 		
      
@@ -710,6 +712,7 @@ ISR(TIMER0_COMP_vect)
 	timer0_counter1 += 1;
 	timer0_counter2 += 1;
 	timer0_counter3 += 1;	
+	timer0_counter4 += 1;
 
 	
 }
