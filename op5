@@ -75,8 +75,9 @@ int cnt = 0;
 
 
 	 int currentPosition = 0;  // Initialize current position
-	 int targetPosition = 1;    // Track the target position
+	 int targetPosition = 0;    // Track the target position
 	int steps, stepIndex = 0;
+	int previousSteps =0;
 
 void init(void)
 {
@@ -137,9 +138,9 @@ int adc_read_potentiometer_to_degrees()
 
 	// Compute the average of the 8 readings
 	adc_result = (unsigned int)(adc_sum / 8);
-
+	
 	// Convert ADC value to degrees
-	degrees = ((int)adc_result - 512.0) * 180.0 / 512.0;
+	degrees = ((int)adc_result - 511.0) * 180.0 / 511.0;
 	return degrees;
 }
 
@@ -444,54 +445,42 @@ void display(int num1, int num2, int direction, char operating_mode, float tempe
 
 void rotate_stepper(int degrees)
 {
+	int steps = degrees / 9;  // Keep your step calculation as is
 
-
-	// Calculate the steps only when a new movement is requested
-	if (currentPosition != targetPosition)
+	// Skip if no movement is needed
+	if (steps == previousSteps)
 	{
-		// Only calculate steps if a movement is needed
-		steps = degrees / 9;
-		targetPosition = currentPosition + steps;  // Set the target position
+		return;  // Exit to avoid repeating the same movement
 	}
 
-	// If the target position is different from the current position
-	if (targetPosition != currentPosition)
+	int targetPosition = currentPosition + (steps - previousSteps);  // Calculate target position
+	previousSteps = steps;
+
+	while (currentPosition != targetPosition)
 	{
-		// Move towards the target position
-		while (currentPosition != targetPosition)
+		if (targetPosition < currentPosition)  // Reverse order for correct CCW
 		{
-			if (targetPosition < currentPosition)
-			{
-				currentPosition--;  // Move backward
-				stepIndex = (8 - (currentPosition % 8)) % 8;  // Reverse order: 0 -> 7 -> 6 -> ...
-				PORTE = step[stepIndex];
-				delay(5);
-			}
-
-			if (targetPosition > currentPosition)
-			{
-				currentPosition++;  // Move forward
-				stepIndex = currentPosition % 8;  // Normal order: 0 -> 1 -> 2 -> ... -> 7
-				PORTE = step[stepIndex];
-				delay(5);
-			}
-
-			// Send position information
-			sprintf(transmit_buffer, "\n");
-			send_message(transmit_buffer);
-			sprintf(transmit_buffer, "Current Position: %d\r\n", currentPosition);
-			send_message(transmit_buffer);
-			sprintf(transmit_buffer, "Target Position: %d\r\n", targetPosition);
-			send_message(transmit_buffer);
-			sprintf(transmit_buffer, "stepIndex: %d\r\n", stepIndex);
+			stepIndex = (currentPosition - 1) % 8;  // Reverse order
+			if (stepIndex < 0) stepIndex += 8;      // Handle negative index wrap-around
+			PORTE = step[stepIndex];
+			currentPosition--;  // Move backward
+			sprintf(transmit_buffer, "Current: %d, Target: %d, stepIndex: %d\r\n", currentPosition, targetPosition, stepIndex);
 			send_message(transmit_buffer);
 		}
-
-		// After completing the movement, update currentPosition to targetPosition
-		currentPosition = targetPosition;
+		else
+		{
+			stepIndex = currentPosition % 8;  // Normal order
+			PORTE = step[stepIndex];
+			currentPosition++;  // Move forward
+			sprintf(transmit_buffer, "Current: %d, Target: %d, stepIndex: %d\r\n", currentPosition, targetPosition, stepIndex);
+			send_message(transmit_buffer);
+		}
+		delay(5);  // Adjust if necessary
 	}
-
 }
+
+
+
 
 
 
@@ -689,7 +678,7 @@ int main(void)
 		
 		if (operating_mode == 'M')
 		{	
-			if (timer0_counter4 >= 200)
+			if (timer0_counter4 >= 1) //400*5ms = 2s
 			{
 			degrees = adc_read_potentiometer_to_degrees();
 			rotate_stepper(degrees);
@@ -713,6 +702,6 @@ ISR(TIMER0_COMP_vect)
 	timer0_counter2 += 1;
 	timer0_counter3 += 1;	
 	timer0_counter4 += 1;
-
+	
 	
 }
