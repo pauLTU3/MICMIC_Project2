@@ -78,6 +78,8 @@ int cnt = 0;
 	 int targetPosition = 0;    // Track the target position
 	int steps, stepIndex = 0;
 	int previousSteps =0;
+	
+//void display(int num1, int num2, int direction, char operating_mode, float temperature,int degrees);
 
 void init(void)
 {
@@ -294,7 +296,7 @@ void stop (void)
 	timer0_counter1=0;
 }
 
-void display(int num1, int num2, int direction, char operating_mode, float temperature,int degrees	)
+void display(int num1, int num2, int direction, char operating_mode, float temperature,int degrees)
 {
 	if (operating_mode == 'S')
 	{
@@ -460,8 +462,10 @@ void rotate_stepper(int degrees)
 	{
 		if (targetPosition < currentPosition)  // Reverse order for correct CCW
 		{
-			stepIndex = (currentPosition - 1) % 8;  // Reverse order
-			if (stepIndex < 0) stepIndex += 8;      // Handle negative index wrap-around
+			//stepIndex = (currentPosition - 1) % 8;  // Reverse order
+			//if (stepIndex < 0) stepIndex += 8;      // Handle negative index wrap-around
+			if (stepIndex==0) stepIndex=7;
+			else stepIndex--;
 			PORTE = step[stepIndex];
 			currentPosition--;  // Move backward
 			sprintf(transmit_buffer, "Current: %d, Target: %d, stepIndex: %d\r\n", currentPosition, targetPosition, stepIndex);
@@ -469,13 +473,15 @@ void rotate_stepper(int degrees)
 		}
 		else
 		{
-			stepIndex = currentPosition % 8;  // Normal order
+			//stepIndex = currentPosition % 8;  // Normal order
+			if (stepIndex==7) stepIndex=0;
+			else stepIndex++;
 			PORTE = step[stepIndex];
 			currentPosition++;  // Move forward
 			sprintf(transmit_buffer, "Current: %d, Target: %d, stepIndex: %d\r\n", currentPosition, targetPosition, stepIndex);
 			send_message(transmit_buffer);
 		}
-		delay(5);  // Adjust if necessary
+		delay(25);  // Adjust if necessary
 	}
 }
 
