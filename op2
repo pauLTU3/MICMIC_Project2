@@ -30,25 +30,14 @@ char transmit_buffer[50];
 // Project 1 operation1
 
 uint8_t switches; // Renamed variable to avoid conflict
-const uint8_t disp[]={0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90, 0xBF, 0xFF,0xA1, 0x92, 0x87}; // 1 2 3 4 5 6 7 8 9 0 - off d S t
+const uint8_t disp[]={0xC0, 0xF9, 0xA4, 0xB0, 0x99, 0x92, 0x82, 0xF8, 0x80, 0x90, 0xBF, 0xFF,0xA1, 0x92}; // 1 2 3 4 5 6 7 8 9 0 - off d S
 
 int num1, num2, direction=0;
 int timer0_counter1 = 0;
 int timer0_counter2 = 0;
-int timer0_counter3 = 0;
-int del=2;
+int del=1;
 int duty = 0;
 char operating_mode = 'D';
-
-int temperature_hundreds;
-int temperature_tens;
-int temperature_ones;
-
-
-//adc
-    char buffer[16];
-    uint16_t adcValue;
-    float temperature;
 
 
 void init(void)
@@ -58,43 +47,8 @@ void init(void)
 	DDRC = 0b11111111; // define the 7 segment display as output
 	DDRB = 0b11100000;
 	PORTB= 0b00000000;
-	DDRF = 0b11100000;
-	PORTF= 0b00000000;
-
-}
-
-void ADC_Init() {
-	ADMUX = (1 << REFS0) | (1 << ADLAR); // AVcc as reference, left-adjust result, ADC0 selected (F0)
-	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1); // Enable ADC, Prescaler = 64
-}
-
-// Function to read ADC value from a specified channel (8-bit)
-uint8_t ADC_Read(uint8_t channel) {
-	ADMUX = (ADMUX & 0xF8) | (channel & 0x07); // Select ADC channel
-	ADCSRA |= (1 << ADSC); // Start conversion
-	while (ADCSRA & (1 << ADSC)); // Wait for conversion to complete
-	return ADCH; // Return 8-bit result from ADCH
-}
-
-// Function to calculate temperature
-float LM335_Temperature(uint8_t adcValue) {
-	float voltage = (adcValue * 5.0) / 255.0; // Convert 8-bit ADC value to voltage
-	float temperatureK = voltage / 0.01; // Convert voltage to Kelvin (10mV/ºK)
-	uint8_t tmp = temperatureK - 273.15;
-	return tmp; // Convert Kelvin to Celsius
 	
-	
-}
 
-void conversiontemperature(float temperature,int *temperature_hundreds, int *temperature_tens, int *temperature_ones)
-{
-	 int temp = (int)temperature;
-
-	 // Extract digits
-	 *temperature_hundreds = temp / 100; // Get the hundreds digit
-	 temp %= 100;                        // Remove the hundreds place
-	 *temperature_tens = temp / 10;      // Get the tens digit
-	 *temperature_ones = temp % 10;      // Get the ones digit
 }
 
 	//USART init
@@ -130,7 +84,8 @@ void conversiontemperature(float temperature,int *temperature_hundreds, int *tem
 			rxUSART.receive = 1; // Set receive flag
 		}
 	}
-	
+
+
 void timer_init(void) {
 	// Set Timer/Counter0 to CTC mode
 	TCCR0 = (1 << WGM01); // CTC mode (WGM01 = 1, WGM00 = 0)
@@ -167,13 +122,15 @@ void delay (int del) // time * 5 ms
 		timer0_counter2=0;
 }
 
+
+
 void dir (int direction)
 {
 				if (direction == 0)
 				{	
 					while (timer0_counter1 < 50)
 					{
-						display (num1,num2,direction,operating_mode,temperature);
+						display (num1,num2,direction,operating_mode);
 					}
 					if(timer0_counter1>=50)
 					{
@@ -187,7 +144,7 @@ void dir (int direction)
 				{
 					while (timer0_counter1 < 50)
 					{
-						display (num1,num2,direction,operating_mode,temperature);
+						display (num1,num2,direction,operating_mode);
 					}
 					if(timer0_counter1>=50)
 					{
@@ -206,108 +163,64 @@ void stop (void)
 	timer0_counter1=0;
 }
 
-void display(int num1, int num2, int direction, char operating_mode, float temperature)
+void display(int num1, int num2, int direction, char operating_mode)
 {
-	if (operating_mode == 'S')
+	if (num1 == 0 && num2 == 0)
 	{
-		PORTA= 0b00000000; // select display on the left
-		PORTC=disp[13];
+		PORTA= 0b11000000; // select display on the left
+		PORTC=disp[11];
 		delay(del);// time * 5 ms
-		if (num1 == 0 && num2 == 0)
+		PORTA= 0b10000000; // select display on the left
+		PORTC=disp[11];
+		delay(del);// time * 5 ms
+		PORTA= 0b01000000; // select display on the left
+		PORTC=disp[11];
+		delay(del);// time * 5 ms
+		if (operating_mode == 'S')
 		{
-			PORTA= 0b11000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
-			PORTA= 0b10000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
-			PORTA= 0b01000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
+			PORTA= 0b00000000; // select display on the left
+			PORTC=disp[13];
 		}
-		
+		if (operating_mode == 'D')
+		{
+			PORTA= 0b00000000; // select display on the left
+			PORTC=disp[12];
+		}
+	}
 		else
 		{
-			PORTA= 0b11000000; // select display on the left
-			PORTC=disp[num1];
-			delay(del);// time * 5 ms
-			PORTA= 0b10000000; // select display on the left
-			PORTC=disp[num2];
-			delay(del);// time * 5 ms
-			PORTA= 0b01000000; // select display on the left
+		PORTA= 0b11000000; // select display on the left
+		PORTC=disp[num1];
+		delay(del);// time * 5 ms
+		PORTA= 0b10000000; // select display on the left
+		PORTC=disp[num2];
+		delay(del);// time * 5 ms
+		PORTA= 0b01000000; // select display on the left
 			if (direction == 0)
-			{
+			{	
 				PORTC=disp[11] ;
 				delay(del);// time * 5 ms
 			}
+		
 			
 			if (direction ==1)
 			{
 				PORTC=disp[10] ;
 				delay(del);// time * 5 ms
 			}
-		}
-	}
-	if (operating_mode == 'D')
-	{
-		PORTA= 0b00000000; // select display on the left
-		PORTC=disp[12];
-		delay(del);// time * 5 ms
-		if (num1 == 0 && num2 == 0)
-		{
-			PORTA= 0b11000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
-			PORTA= 0b10000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
-			PORTA= 0b01000000; // select display on the left
-			PORTC=disp[11];
-			delay(del);// time * 5 ms
-		}
-		
-		else
-		{
-			PORTA= 0b11000000; // select display on the left
-			PORTC=disp[num1];
-			delay(del);// time * 5 ms
-			PORTA= 0b10000000; // select display on the left
-			PORTC=disp[num2];
-			delay(del);// time * 5 ms
-			PORTA= 0b01000000; // select display on the left
-			if (direction == 0)
+		PORTA= 0b00000000; // select display on the left	
+			if (operating_mode == 'S')
 			{
-				PORTC=disp[11] ;
+				PORTC=disp[13];
+				delay(del);// time * 5 ms
+			}
+			if (operating_mode == 'D')
+			{
+				PORTC=disp[12];
 				delay(del);// time * 5 ms
 			}
 			
-			if (direction ==1)
-			{
-				PORTC=disp[10] ;
-				delay(del);// time * 5 ms
-			}
 		}
-	}
-	
-	if (operating_mode == 'T')
-	{
-		conversiontemperature(temperature,&temperature_hundreds,&temperature_tens,&temperature_ones);
-		PORTA= 0b00000000; // select display on the left
-		PORTC=disp[14];
-		delay(del);// time * 5 ms
-		PORTA= 0b11000000; // select display 1 on the right
-		PORTC=disp[temperature_ones];
-		delay(del);// time * 5 ms
-		PORTA= 0b10000000; // select display 2on the right
-		PORTC=disp[temperature_tens];
-		delay(del);// time * 5 ms
-		PORTA= 0b01000000; // select display 3 on the right
-		PORTC=disp[temperature_hundreds];
-		delay(del);// time * 5 ms
-			
-	}
-	
-	
 }
 
 int main(void)
@@ -317,9 +230,8 @@ int main(void)
 	usart_init();
     timer_init();
 	timer2_init();
-	ADC_Init();
-	
-	PORTB= 0b00000000;
+
+	dir (direction);
     while (1)
     {
 		 if (rxUSART.receive == 1) 
@@ -331,7 +243,7 @@ int main(void)
             } 
 			else 
 			{
-                sprintf(transmit_buffer, "Leter: %c\r\n", rxUSART.receiver_buffer);
+                sprintf(transmit_buffer, "tecla: %c\r\n", rxUSART.receiver_buffer);
                 send_message(transmit_buffer);
             }	
 			rxUSART.receive = 0; // Clear receive flag
@@ -348,13 +260,6 @@ int main(void)
 		{
 			operating_mode = 'S';	
 		}
-			
-		if (rxUSART.receiver_buffer == 't'||rxUSART.receiver_buffer == 'T')
-		{
-			operating_mode = 'T';
-		}	
-			
-			
 			
 		if (operating_mode == 'S')
 		{
@@ -426,7 +331,14 @@ int main(void)
 			
 		if (operating_mode == 'D')
 		{
-			
+			if ( rxUSART.receiver_buffer == 'p'||rxUSART.receiver_buffer == 'P')
+			{
+				dir (direction);
+				duty = 0;
+				num1 =0; num2 =0;
+				
+				rxUSART.receiver_buffer = 'q';
+			}
 			
 			if ( rxUSART.receiver_buffer == '1')
 			{
@@ -434,7 +346,7 @@ int main(void)
 				duty = 25;
 				num1 =5; num2 =2;
 				
-			
+				rxUSART.receiver_buffer = 'q';
 			}
 			
 			if ( rxUSART.receiver_buffer == '2')
@@ -443,7 +355,7 @@ int main(void)
 				duty = 50;
 				num1 =0; num2 =5;
 				
-			
+				rxUSART.receiver_buffer = 'q';
 			}
 			
 			if ( rxUSART.receiver_buffer == '3')
@@ -452,7 +364,7 @@ int main(void)
 				duty = 70;
 				num1 =0; num2 =7;
 				
-			
+				rxUSART.receiver_buffer = 'q';
 			}
 			
 			if ( rxUSART.receiver_buffer == '4')
@@ -461,7 +373,7 @@ int main(void)
 				duty = 90;
 				num1 =0; num2 =9;
 				
-			
+				rxUSART.receiver_buffer = 'q';
 			}
 			
 			if ( rxUSART.receiver_buffer == 'i'||rxUSART.receiver_buffer == 'I')
@@ -471,15 +383,6 @@ int main(void)
 				stop ();
 				dir (direction);
 				rxUSART.receiver_buffer = 'q';
-			}
-			
-			if ( rxUSART.receiver_buffer == 'p'||rxUSART.receiver_buffer == 'P')
-			{
-				duty = 0;
-				num1 =0; num2 =0;
-				stop ();
-				
-				
 			}
 			if ( rxUSART.receiver_buffer == 'b'||rxUSART.receiver_buffer == 'B')
 			{
@@ -501,7 +404,7 @@ int main(void)
 		
 		
 		OCR2= (duty * 255)/100;
-		display (num1,num2,direction,operating_mode,temperature);
+		display (num1,num2,direction,operating_mode);
 	}
 		
      
@@ -513,32 +416,4 @@ ISR(TIMER0_COMP_vect)
 {
 	timer0_counter1 += 1;
 	timer0_counter2 += 1;
-	timer0_counter3 += 1;
-	
-	
-	static uint8_t reading_count = 0;
-	static float temperature_sum = 0.0;
-
-	if (timer0_counter3 > 100) {
-		timer0_counter3 = 0; // Reset the timer counter
-
-		// Take an ADC reading
-		adcValue = ADC_Read(0);
-		float current_temperature = LM335_Temperature(adcValue);
-
-		// Accumulate temperature values and increment reading count
-		temperature_sum += current_temperature;
-		reading_count++;
-
-		// If two readings have been taken, calculate the average
-		if (reading_count >= 2) {
-			temperature = temperature_sum / 2.0; // Compute average temperature
-
-			// Reset counters for the next second
-			reading_count = 0;
-			temperature_sum = 0.0;
-		}
-    }
-			
-	
 }
